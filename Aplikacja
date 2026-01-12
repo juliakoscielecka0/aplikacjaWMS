@@ -1,0 +1,108 @@
+import streamlit as st
+from supabase import create_client, Client
+
+# --- KONFIGURACJA BEZPIECZEŃSTWA ---
+# Pobieranie danych z st.secrets (dla Streamlit Cloud) 
+# lub z lokalnego pliku .streamlit/secrets.toml
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except Exception:
+    # Fallback do ręcznego wpisania (tylko do testów lokalnych!)
+    SUPABASE_URL = "https://twoja-projekt-id.supabase.co"
+    SUPABASE_KEY = "twój-anon-key"
+
+# Inicjalizacja klienta Supabase
+@st.cache_resource
+def init_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = init_supabase()
+
+# --- FUNKCJE LOGIKI BAZY DANYCH ---
+
+def get_inventory():
+    """Pobiera wszystkie produkty z tabeli 'inventory'."""
+    try:
+        response = supabase.table("inventory").select("*").order("id").execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Błąd podczas pobierania danych: {e}")
+        return []
+
+def add_product(name, price, quantity):
+    """Dodaje nowy produkt do bazy danych."""
+    try:
+        data = {
+            "name": name,
+            "price": float(price),
+            "quantity": int(quantity)
+        }
+        supabase.table("inventory").insert(data).execute()
+        st.success(f"Produkt '{name}' został dodany!")
+    except Exception as e:
+        st.error(f"Błąd podczas dodawania: {e}")
+
+def delete_product(product_id):
+    """Usuwa produkt o podanym ID."""
+    try:
+        supabase.table("inventory").delete().eq("id", product_id).execute()
+        st.success(f"Usunięto produkt o ID: {product_id}")
+    except Exception as e:
+        st.error(f"Błąd podczas usuwania: {e}")
+
+# --- INTERFEJS UŻYTKOWNIKA STREAMLIT ---
+
+st.set_page_config(page_title="System WMS", layout="wide", page_icon="📦")
+
+st.title("📦 System Zarządzania Magazynem (WMS)")
+st.markdown("---")
+
+# Sidebar - Panel boczny
+with st.sidebar:
+    st.header("➕ Dodaj nowy produkt")
+    with st.form("add_form", clear_on_submit=True):
+        new_name = st.text_input("Nazwa produktu")
+        new_price = st.number_input("Cena jednostkowa (PLN)", min_value=0.0, format="%.2f")
+        new_qty = st.number_input("Ilość (szt.)", min_value=0, step=1)
+        submit_button = st.form_submit_button("Dodaj do magazynu")
+
+        if submit_button:
+            if new_name:
+                add_product(new_name, new_price, new_qty)
+                st.rerun()
+            else:
+                st.warning("Podaj nazwę produktu!")
+
+# Główny widok
+data = get_inventory()
+
+if data:
+    total_value = sum(item['price'] * item['quantity'] for item in data)
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.metric("Całkowita wartość magazynu", f"{total_value:,.2f} PLN")
+    
+    # Przygotowanie tabeli
+    display_data = []
+    for item in data:
+        display_data.append({
+            "ID": item['id'],
+            "Nazwa": item['name'],
+            "Cena": f"{item['price']:.2f} PLN",
+            "Ilość": item['quantity'],
+            "Suma": f"{(item['price'] * item['quantity']):.2f} PLN"
+        })
+    
+    st.dataframe(display_data, use_container_width=True, hide_index=True)
+
+    # Sekcja usuwania
+    st.markdown("---")
+    with st.expander("🗑️ Usuń produkt"):
+        del_id = st.number_input("Podaj ID do usunięcia", min_value=0, step=1)
+        if st.button("Potwierdź usunięcie", type="primary"):
+            delete_product(del_id)
+            st.rerun()
+else:
+    st.info("Brak produktów w bazie. Dodaj coś w panelu bocznym.")
